@@ -6,10 +6,14 @@ OCM Excel files in one click.
 """
 
 import os
+import sys
 import threading
 import logging
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
+
+# Ensure the script directory is in sys.path for direct execution
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from generate_ocm_net_report import (
     process_vendor_files,
