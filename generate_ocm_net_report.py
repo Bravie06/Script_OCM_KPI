@@ -345,20 +345,21 @@ def _parse_date(val) -> date | None:
     return None
 
 
-def _extract_site_code(site_name: str) -> str | None:
+def _normalise_site_name(site_name: str | None) -> str:
     """
-    Extract the 'XXX_NNN' site code from site name strings such as:
-      'ADM_004_H_MEIGANGA_U'  →  'ADM_004'
-      'CTR_020_Z_Masque'      →  'CTR_020'
-      'LIT_103_Z_Makepe-...'  →  'LIT_103'
-    Purely numeric strings (aggregate rows) return None.
+    Normalise a site name string for reliable direct comparison:
+    - Replace non-breaking spaces with standard space
+    - Strip leading and trailing whitespace
+    - Convert to uppercase
+    - Replace dashes '-' with underscores '_'
+    - Collapse multiple spaces/underscores into a single underscore
     """
     if not site_name:
-        return None
-    parts = _normalise(site_name).split('_')
-    if len(parts) >= 2 and re.match(r'^\d+$', parts[1]):
-        return f'{parts[0]}_{parts[1]}'
-    return None
+        return ''
+    s = _normalise(site_name).upper()
+    s = s.replace('-', '_')
+    s = re.sub(r'[\s_]+', '_', s)
+    return s.strip('_')
 
 
 def _date_to_week_key(d: date) -> str:
@@ -448,7 +449,7 @@ def read_vendor_file(
 
     # Use accumulator to handle files with multiple rows per site/day
     # (e.g. ZTE packet-loss file with one row per IP path).
-    # Structure: {site_code: {date: {sheet_name: [values]}}}
+    # Structure: {site_name: {date: {sheet_name: [values]}}}
     accum: dict[str, dict[date, dict[str, list[float]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
     )
@@ -461,13 +462,8 @@ def read_vendor_file(
         site_raw = row[site_idx] if site_idx < len(row) else None
         if not site_raw:
             continue
-        site_str = str(site_raw).strip()
-        if skip_re and skip_re.match(site_str):
-            skipped += 1
-            continue
-
-        site_code = _extract_site_code(site_str)
-        if not site_code:
+        site_name = str(site_raw).strip()
+        if skip_re and skip_re.match(site_name):
             skipped += 1
             continue
 
@@ -479,23 +475,23 @@ def read_vendor_file(
             raw = row[col_idx] if col_idx < len(row) else None
             val = _to_float(raw)
             if val is not None:
-                accum[site_code][d][sheet_name].append(round(val * mult, 6))
+                accum[site_name][d][sheet_name].append(round(val * mult, 6))
 
         for sheet_name, idx_a, idx_b, fn in computed_specs:
             val_a = row[idx_a] if idx_a < len(row) else None
             val_b = row[idx_b] if idx_b < len(row) else None
             val = fn(val_a, val_b)
             if val is not None:
-                accum[site_code][d][sheet_name].append(val)
+                accum[site_name][d][sheet_name].append(val)
 
     wb.close()
 
     # Collapse accumulator: average multiple values for the same site/date/sheet
     result: dict[str, dict[date, dict[str, float]]] = {}
-    for site_code, date_map in accum.items():
-        result[site_code] = {}
+    for site_name, date_map in accum.items():
+        result[site_name] = {}
         for d, sheet_map in date_map.items():
-            result[site_code][d] = {
+            result[site_name][d] = {
                 s: round(sum(vals) / len(vals), 6)
                 for s, vals in sheet_map.items()
             }
@@ -518,17 +514,17 @@ def _aggregate(
     buckets: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
     )
-    for site_code, date_map in daily.items():
+    for site_name, date_map in daily.items():
         for d, sheet_map in date_map.items():
             pk = key_fn(d)
             for sheet, val in sheet_map.items():
-                buckets[site_code][pk][sheet].append(val)
+                buckets[site_name][pk][sheet].append(val)
 
     result: dict[str, dict[str, dict[str, float]]] = {}
-    for site_code, pk_map in buckets.items():
-        result[site_code] = {}
+    for site_name, pk_map in buckets.items():
+        result[site_name] = {}
         for pk, sheet_map in pk_map.items():
-            result[site_code][pk] = {
+            result[site_name][pk] = {
                 s: round(sum(vals), 4) if s in ADDITIVE_SHEETS
                    else round(sum(vals) / len(vals), 4)
                 for s, vals in sheet_map.items()
@@ -619,7 +615,7 @@ def update_ocm_file(
       Row 1  (1-based) : empty / title row
       Row 2  (1-based) : header — site metadata in cols A-H, period labels from col I
       Row 3+ (1-based) : one site per row
-      Col B             : 'Code du Site'  (used for site lookup)
+      Col A             : 'Nom du Site'  (used for direct full site name lookup)
     """
     def _log(msg):
         if log_fn:
@@ -662,19 +658,22 @@ def update_ocm_file(
                 elif period == 'monthly' and re.match(r'^\d{4}M\d{2}$', hv):
                     period_col[hv] = cell.column
 
-        # ── Build site_code → row-number map from column B (Code du Site) ─────
+        # ── Build site_name → row-number map from column A (Nom du Site) ─────
         site_row: dict[str, int] = {}
-        for row in ws.iter_rows(min_row=3, max_col=2, values_only=False):
-            code_cell = row[1]  # column B (0-indexed = index 1)
-            if code_cell.value:
-                site_row[str(code_cell.value).strip()] = code_cell.row
+        for row in ws.iter_rows(min_row=3, max_col=1, values_only=False):
+            site_cell = row[0]  # column A (0-indexed = index 0)
+            if site_cell.value:
+                norm_name = _normalise_site_name(str(site_cell.value))
+                if norm_name:
+                    site_row[norm_name] = site_cell.row
 
         # ── Write values ───────────────────────────────────────────────────────
         written = 0
-        for site_code, period_map in data.items():
-            if site_code not in site_row:
+        for site_name, period_map in data.items():
+            norm_key = _normalise_site_name(site_name)
+            if norm_key not in site_row:
                 continue
-            rn = site_row[site_code]
+            rn = site_row[norm_key]
             for pk, sheet_map in period_map.items():
                 if sheet_name not in sheet_map:
                     continue

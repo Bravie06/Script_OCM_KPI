@@ -86,10 +86,10 @@ class TestGUIOCMNet(unittest.TestCase):
 
             # Test read_vendor_file directly
             vdata = read_vendor_file(n2g_path, 'N_2G')
-            self.assertIn('ADM_004', vdata)
+            self.assertIn('ADM_004_N_SITE', vdata)
             d = date(2026, 5, 10)
-            self.assertIn(d, vdata['ADM_004'])
-            site_kpis = vdata['ADM_004'][d]
+            self.assertIn(d, vdata['ADM_004_N_SITE'])
+            site_kpis = vdata['ADM_004_N_SITE'][d]
             self.assertEqual(site_kpis.get('Avail2G'), 99.5)
             self.assertEqual(site_kpis.get('DailyCombinedCSTrafic (Kerl)'), 1.5)
             self.assertEqual(site_kpis.get('CSSR2G'), 98.2)
@@ -101,15 +101,15 @@ class TestGUIOCMNet(unittest.TestCase):
             ws_avail = wb_ocm.active
             ws_avail.title = 'Avail2G'
             ws_avail.append(['Title Row'])
-            ws_avail.append(['ColA', 'Code du Site', 'ColC', 'ColD', 'ColE', 'ColF', 'ColG', 'ColH', date(2026, 5, 10)])
-            ws_avail.append(['Name', 'ADM_004', '', '', '', '', '', '', None])
+            ws_avail.append(['Nom du Site', 'Code du Site', 'ColC', 'ColD', 'ColE', 'ColF', 'ColG', 'ColH', date(2026, 5, 10)])
+            ws_avail.append(['ADM_004_N_SITE', 'ADM_004', '', '', '', '', '', '', None])
 
             # Add other sheets
             for sheet_name in ['DailyCombinedCSTrafic (Kerl)', 'CSSR2G', 'DCR2G']:
                 ws = wb_ocm.create_sheet(title=sheet_name)
                 ws.append(['Title Row'])
-                ws.append(['ColA', 'Code du Site', 'ColC', 'ColD', 'ColE', 'ColF', 'ColG', 'ColH', date(2026, 5, 10)])
-                ws.append(['Name', 'ADM_004', '', '', '', '', '', '', None])
+                ws.append(['Nom du Site', 'Code du Site', 'ColC', 'ColD', 'ColE', 'ColF', 'ColG', 'ColH', date(2026, 5, 10)])
+                ws.append(['ADM_004_N_SITE', 'ADM_004', '', '', '', '', '', '', None])
 
             wb_ocm.save(ocm_daily_path)
 
